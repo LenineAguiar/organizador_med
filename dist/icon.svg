@@ -1,0 +1,5 @@
+<!-- Cria o ícone vetorial usado pelo navegador e pela instalação da aplicação. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="120" fill="#287d72"/>
+  <path d="M238 112h36v126h126v36H274v126h-36V274H112v-36h126z" fill="#fff"/>
+</svg>

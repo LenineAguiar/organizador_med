@@ -1,0 +1,17 @@
+{
+  "name": "Meu Organizador Médico",
+  "short_name": "Consultas",
+  "description": "Consultas, observações e documentos médicos organizados.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f7fb",
+  "theme_color": "#f5f7fb",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

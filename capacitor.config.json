@@ -1,0 +1,8 @@
+{
+  "appId": "br.com.organizadormedico",
+  "appName": "Meu Organizador Médico",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http"
+  }
+}
