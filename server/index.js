@@ -347,45 +347,60 @@ function parseRecordPayload(body) {
     error.status = 400;
     throw error;
   }
+  const timestamp = new Date();
+  const date = typeof payload.date === "string" && payload.date
+    ? payload.date
+    : `${timestamp.getFullYear()}-${String(timestamp.getMonth() + 1).padStart(2, "0")}-${String(timestamp.getDate()).padStart(2, "0")}`;
+  const time = typeof payload.time === "string" && payload.time
+    ? payload.time
+    : `${String(timestamp.getHours()).padStart(2, "0")}:${String(timestamp.getMinutes()).padStart(2, "0")}`;
   if (
     typeof payload.doctor !== "string" ||
-    typeof payload.specialty !== "string" ||
-    typeof payload.date !== "string" ||
-    typeof payload.time !== "string" ||
     !payload.doctor.trim() ||
-    !payload.specialty.trim() ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(payload.date) ||
-    !/^\d{2}:\d{2}$/.test(payload.time)
+    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    !/^\d{2}:\d{2}$/.test(time)
   ) {
-    const error = new Error("Preencha médico, especialidade, data e horário.");
+    const error = new Error("Preencha o nome do médico e informe uma data e horário válidos.");
     error.status = 400;
     throw error;
   }
 
   const retainedIds = Object.fromEntries(categories.map((category) => [category, []]));
+  const retainedDescriptions = Object.fromEntries(categories.map((category) => [category, []]));
   for (const category of categories) {
     const items = payload.attachments?.[category] || [];
-    if (!Array.isArray(items) || items.some((item) => typeof item?.id !== "string")) {
+    if (!Array.isArray(items) || items.some((item) =>
+      typeof item?.id !== "string" ||
+      (item.description !== undefined && (typeof item.description !== "string" || item.description.length > 200))
+    )) {
       const error = new Error("A lista de anexos enviada é inválida.");
       error.status = 400;
       throw error;
     }
     retainedIds[category] = items.map((item) => item.id);
+    retainedDescriptions[category] = items.map(({ id, description }) => ({ id, description }));
   }
 
   return {
     doctor: payload.doctor.trim(),
-    specialty: payload.specialty.trim(),
-    date: payload.date,
-    time: payload.time,
+    specialty: typeof payload.specialty === "string" ? payload.specialty.trim() : "",
+    date,
+    time,
     observations: typeof payload.observations === "string" ? payload.observations : "",
     retainedIds,
+    retainedDescriptions,
   };
 }
 
 // Valida todos os arquivos antes de gravá-los, evitando deixar uploads inválidos parcialmente persistidos.
-async function storeUploadedFiles(recordId, files, fileCategories) {
-  if (!Array.isArray(fileCategories) || fileCategories.length !== files.length) {
+async function storeUploadedFiles(recordId, files, fileCategories, fileDescriptions) {
+  if (
+    !Array.isArray(fileCategories) ||
+    fileCategories.length !== files.length ||
+    !Array.isArray(fileDescriptions) ||
+    fileDescriptions.length !== files.length ||
+    fileDescriptions.some((description) => typeof description !== "string" || description.length > 200)
+  ) {
     const error = new Error("Não foi possível relacionar os arquivos às categorias.");
     error.status = 400;
     throw error;
@@ -411,6 +426,7 @@ async function storeUploadedFiles(recordId, files, fileCategories) {
       attachments[category].push({
         id: crypto.randomUUID(),
         name: path.basename(file.originalname).slice(0, 180),
+        description: fileDescriptions[index].trim(),
         storedName,
         mimeType: file.mimetype,
         size: file.size,
@@ -465,6 +481,17 @@ app.post("/api/records", upload.array("files", 20), async (request, response, ne
       error.status = 400;
       throw error;
     }
+    let fileDescriptions;
+    try {
+      fileDescriptions = JSON.parse(request.body.fileDescriptions || "[]");
+    } catch {
+      const error = new Error("A lista de descrições dos arquivos é inválida.");
+      error.status = 400;
+      throw error;
+    }
+    if (!request.body.fileDescriptions) {
+      fileDescriptions = (request.files || []).map(() => "");
+    }
     const records = await readRecords();
     const existing = request.body.id ? records.find((record) => record.id === request.body.id) : null;
     if (request.body.id && !existing) {
@@ -478,10 +505,21 @@ app.post("/api/records", upload.array("files", 20), async (request, response, ne
       categories.map((category) => {
         const existingFiles = existing?.attachments?.[category] || [];
         const requestedIds = new Set(payload.retainedIds[category]);
-        return [category, existingFiles.filter((file) => requestedIds.has(file.id))];
+        const submittedDescriptions = new Map(
+          payload.retainedDescriptions[category].map(({ id, description }) => [id, description]),
+        );
+        return [
+          category,
+          existingFiles
+            .filter((file) => requestedIds.has(file.id))
+            .map((file) => {
+              const description = submittedDescriptions.get(file.id);
+              return description === undefined ? file : { ...file, description: description.trim() };
+            }),
+        ];
       }),
     );
-    const uploaded = await storeUploadedFiles(recordId, request.files || [], fileCategories);
+    const uploaded = await storeUploadedFiles(recordId, request.files || [], fileCategories, fileDescriptions);
     const attachments = Object.fromEntries(
       categories.map((category) => [
         category,

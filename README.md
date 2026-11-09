@@ -2,6 +2,10 @@
 
 Aplicação responsiva em React e Node.js para organizar consultas, observações e documentos. A mesma interface funciona no navegador de computador e pode ser instalada como aplicativo web (PWA) em celulares Android usando um navegador compatível.
 
+## Versão 1.5
+
+Esta versão permite adicionar e alterar descrições dos anexos sem substituir seus arquivos. Filtros começam recolhidos; ao criar uma consulta, somente o nome do médico é obrigatório, e data e horário são preenchidos automaticamente se não forem informados. A especialidade permanece em branco quando não preenchida. A atualização preserva as consultas e os anexos já armazenados.
+
 ## Executar localmente
 
 1. Instale o Node.js 20 ou superior.

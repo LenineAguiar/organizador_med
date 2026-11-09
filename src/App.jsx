@@ -20,6 +20,17 @@ const categories = [
 ];
 const attachmentCategories = categories.filter((category) => category.id !== "observations");
 
+function formatInputDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatInputTime(date) {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
 // Cria um formulário vazio com as propriedades esperadas pela API.
 function emptyRecord() {
   return {
@@ -49,7 +60,7 @@ export default function App() {
   const [authError, setAuthError] = useState("");
   const [records, setRecords] = useState([]);
   const [filters, setFilters] = useState({ doctor: "", specialty: "", from: "", to: "" });
-  const [filtersExpanded, setFiltersExpanded] = useState(true);
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [draft, setDraft] = useState(null);
   const [activeTab, setActiveTab] = useState("observations");
   const [pendingFiles, setPendingFiles] = useState({});
@@ -426,7 +437,10 @@ export default function App() {
     setErrorMessage("");
     setPendingFiles((current) => ({
       ...current,
-      [category]: [...(current[category] || []), ...selected],
+      [category]: [
+        ...(current[category] || []),
+        ...selected.map((file) => ({ file, description: "" })),
+      ],
     }));
   }
 
@@ -448,6 +462,27 @@ export default function App() {
     }));
   }
 
+  function updateAttachmentDescription(category, fileId, description) {
+    setDraft((current) => ({
+      ...current,
+      attachments: {
+        ...current.attachments,
+        [category]: (current.attachments[category] || []).map((file) =>
+          file.id === fileId ? { ...file, description } : file,
+        ),
+      },
+    }));
+  }
+
+  function updatePendingDescription(category, pendingIndex, description) {
+    setPendingFiles((current) => ({
+      ...current,
+      [category]: current[category].map((item, index) =>
+        index === pendingIndex ? { ...item, description } : item,
+      ),
+    }));
+  }
+
   // Salva no armazenamento local do Android ou envia os dados ao servidor desktop.
   async function saveRecord(event) {
     event.preventDefault();
@@ -456,15 +491,23 @@ export default function App() {
     setNotice("");
 
     try {
+      const timestamp = new Date();
+      const recordDraft = {
+        ...draft,
+        specialty: draft.specialty.trim(),
+        date: draft.date || formatInputDate(timestamp),
+        time: draft.time || formatInputTime(timestamp),
+      };
       if (nativeApp) {
         const attachments = Object.fromEntries(
           attachmentCategories.map(({ id }) => [
             id,
             [
               ...(draft.attachments[id] || []),
-              ...(pendingFiles[id] || []).map((file) => ({
+              ...(pendingFiles[id] || []).map(({ file, description }) => ({
                 id: crypto.randomUUID(),
                 name: file.name,
+                description: description.trim(),
                 size: file.size,
                 mimeType: file.type,
                 blob: file,
@@ -472,13 +515,12 @@ export default function App() {
             ],
           ]),
         );
-        const timestamp = new Date().toISOString();
         await saveLocalRecord({
-          ...draft,
+          ...recordDraft,
           id: draft.id || crypto.randomUUID(),
           attachments,
-          createdAt: draft.createdAt || timestamp,
-          updatedAt: timestamp,
+          createdAt: draft.createdAt || timestamp.toISOString(),
+          updatedAt: timestamp.toISOString(),
         });
         setDraft(null);
         setPendingFiles({});
@@ -491,16 +533,19 @@ export default function App() {
       const retainedAttachments = Object.fromEntries(
         attachmentCategories.map(({ id }) => [id, draft.attachments[id] || []]),
       );
-      formData.append("payload", JSON.stringify({ ...draft, attachments: retainedAttachments }));
+      formData.append("payload", JSON.stringify({ ...recordDraft, attachments: retainedAttachments }));
       if (draft.id) formData.append("id", draft.id);
       const uploadedCategories = [];
+      const uploadedDescriptions = [];
       for (const { id } of attachmentCategories) {
-        for (const file of pendingFiles[id] || []) {
+        for (const { file, description } of pendingFiles[id] || []) {
           formData.append("files", file);
           uploadedCategories.push(id);
+          uploadedDescriptions.push(description);
         }
       }
       formData.append("fileCategories", JSON.stringify(uploadedCategories));
+      formData.append("fileDescriptions", JSON.stringify(uploadedDescriptions));
       const response = await apiFetch("/api/records", { method: "POST", body: formData });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Não foi possível salvar a consulta.");
@@ -664,15 +709,15 @@ export default function App() {
                 </label>
                 <label>
                   Especialidade
-                  <input required maxLength="120" value={draft.specialty} onChange={(event) => updateDraft("specialty", event.target.value)} placeholder="Ex.: Cardiologia" />
+                  <input maxLength="120" value={draft.specialty} onChange={(event) => updateDraft("specialty", event.target.value)} placeholder="Ex.: Cardiologia" />
                 </label>
                 <label>
                   Data
-                  <input required type="date" value={draft.date} onChange={(event) => updateDraft("date", event.target.value)} />
+                  <input type="date" value={draft.date} onChange={(event) => updateDraft("date", event.target.value)} />
                 </label>
                 <label>
                   Horário
-                  <input required type="time" value={draft.time} onChange={(event) => updateDraft("time", event.target.value)} />
+                  <input type="time" value={draft.time} onChange={(event) => updateDraft("time", event.target.value)} />
                 </label>
               </div>
               <div className="tab-list" role="tablist" aria-label="Informações da consulta">
@@ -708,25 +753,45 @@ export default function App() {
                       {(draft.attachments[activeTab] || []).map((file) => (
                         <li key={file.id}>
                           <span className="file-kind" aria-hidden="true">{file.mimeType === "application/pdf" ? "PDF" : "IMG"}</span>
-                          {nativeApp ? (
-                            <>
-                              <span className="attachment-name">{file.name}</span>
-                              <div className="attachment-actions">
-                                <button className="text-button" type="button" onClick={(event) => downloadAttachment(event, file)}>Baixar</button>
-                                <button className="text-button" type="button" onClick={(event) => shareAttachment(event, file)}>Compartilhar</button>
-                              </div>
-                            </>
-                          ) : (
-                            <a href={apiUrl(`/api/records/${draft.id}/files/${file.id}`)} download>{file.name}</a>
+                          <div className="attachment-item-details">
+                            {nativeApp ? (
+                              <span className="attachment-display-name">{file.description?.trim() || file.name}</span>
+                            ) : (
+                              <a className="attachment-display-name" href={apiUrl(`/api/records/${draft.id}/files/${file.id}`)} download>{file.description?.trim() || file.name}</a>
+                            )}
+                            <input
+                              className="attachment-description"
+                              maxLength="200"
+                              value={file.description || ""}
+                              onChange={(event) => updateAttachmentDescription(activeTab, file.id, event.target.value)}
+                              placeholder="Descrição do arquivo (opcional)"
+                              aria-label={`Descrição do arquivo ${file.name}`}
+                            />
+                          </div>
+                          {nativeApp && (
+                            <div className="attachment-actions">
+                              <button className="text-button" type="button" onClick={(event) => downloadAttachment(event, file)}>Baixar</button>
+                              <button className="text-button" type="button" onClick={(event) => shareAttachment(event, file)}>Compartilhar</button>
+                            </div>
                           )}
-                          <button className="remove-file" type="button" onClick={() => removeAttachment(activeTab, file.id)} aria-label={`Remover ${file.name}`}>×</button>
+                          <button className="remove-file" type="button" onClick={() => removeAttachment(activeTab, file.id)} aria-label={`Remover ${file.description?.trim() || file.name}`}>×</button>
                         </li>
                       ))}
-                      {(pendingFiles[activeTab] || []).map((file, index) => (
+                      {(pendingFiles[activeTab] || []).map(({ file, description }, index) => (
                         <li key={`${file.name}-${index}`}>
                           <span className="file-kind" aria-hidden="true">{file.type === "application/pdf" ? "PDF" : "IMG"}</span>
-                          <span>{file.name} <small>(aguardando salvar)</small></span>
-                          <button className="remove-file" type="button" onClick={() => removeAttachment(activeTab, null, index)} aria-label={`Remover ${file.name}`}>×</button>
+                          <div className="attachment-item-details">
+                            <span className="attachment-display-name">{description.trim() || file.name} <small>(aguardando salvar)</small></span>
+                            <input
+                              className="attachment-description"
+                              maxLength="200"
+                              value={description}
+                              onChange={(event) => updatePendingDescription(activeTab, index, event.target.value)}
+                              placeholder="Descrição do arquivo (opcional)"
+                              aria-label={`Descrição do arquivo ${file.name}`}
+                            />
+                          </div>
+                          <button className="remove-file" type="button" onClick={() => removeAttachment(activeTab, null, index)} aria-label={`Remover ${description.trim() || file.name}`}>×</button>
                         </li>
                       ))}
                     </ul>
